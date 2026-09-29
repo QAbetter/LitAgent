@@ -11,7 +11,7 @@
 - **混合检索**：BM25 词面匹配 + 向量语义检索，RRF 融合，修复跨语言与答偏问题。
 - **跨语言查询改写**：中文问题先改写为英文检索词，跨越中英 embedding 语义鸿沟。
 - **Agent 编排**：`glm-4-flash` function calling 多轮循环，自主选择 5 个工具并溯源。
-- **评测闭环**：评测集 + 检索指标（Hit Rate / Recall@k / MRR），可量化对比检索方案。
+- **评测闭环**：38 条评测集（2 篇论文 × 中英对照 × 类型分层）+ 检索指标（Hit Rate / Recall@k / MRR）+ 4 档消融实验。
 
 ## 技术栈
 
@@ -41,7 +41,7 @@ litagent/
     embedding.py         # 向量化（embedding-3，自动分批）
     vector_store.py      # ChromaDB 封装
     retriever.py         # 纯向量检索（baseline）
-    hybrid.py            # Phase 4：混合检索 + 跨语言改写
+    hybrid.py            # Phase 4：混合检索 + 跨语言改写 + LLM 精排（可配置消融）
     generator.py         # 带溯源的答案生成
     pipeline.py          # 建索引 + 问答流水线
   agent/
@@ -53,9 +53,9 @@ litagent/
     server.py            # FastAPI 后端（多论文上传/选择）
     static/index.html    # Web 聊天界面（真图展示 + 工具徽章）
   eval/
-    dataset.py           # 检索评测集
+    dataset.py           # 检索评测集（38 条，2 论文，中英对照 + 类型分层）
     metrics.py           # Hit Rate / Recall@k / MRR
-    run_eval.py          # 检索方案对比入口
+    run_eval.py          # 4 档消融对比入口
 config/settings.py       # 配置（读取 .env）
 ```
 
@@ -91,11 +91,13 @@ python -m litagent.ui.server
 # 浏览器打开 http://127.0.0.1:8000
 ```
 
-### 检索评测
+### 检索评测（4 档消融）
 
 ```bash
-python -m litagent.eval.run_eval data/bert.pdf
-# 输出 Hit Rate / Recall@k / MRR，对比「纯向量」vs「混合检索」
+python -m litagent.eval.run_eval data/bert.pdf     # BERT 论文（20 条）
+python -m litagent.eval.run_eval data/paper.pdf    # Transformer 论文（18 条）
+# 每个命令跑 4 档检索配置：纯向量 → +BM25 → +跨语言改写 → +LLM 精排，
+# 输出逐条明细 + 汇总指标（Hit Rate / Recall@k / MRR）+ 分类型分层
 ```
 
 ## 各阶段
@@ -104,17 +106,39 @@ python -m litagent.eval.run_eval data/bert.pdf
 - **Phase 1** 文本 RAG —— PDF 抽取 → 切分 → 向量化 → 检索 → 生成。
 - **Phase 2** 多模态抽取 —— 图/表渲染成图，视觉模型转 Markdown，图文对齐（处理双栏、公式位图、跨图注串扰等边界）。
 - **Phase 3** Agent 编排 —— function calling 多轮循环 + 5 工具 + 溯源 + 多轮记忆；Web 界面 + 多论文管理。
-- **Phase 4** 评测闭环 + 检索增强 —— 混合检索（BM25 + 向量 RRF）+ 跨语言查询改写，用指标量化修复效果。
+- **Phase 4** 评测闭环 + 检索增强 —— 混合检索（BM25 + 向量 RRF）+ 跨语言改写 + LLM 精排；38 条评测集 + 4 档消融实验，量化各组件增量。
 
-## 检索优化效果（data/bert.pdf）
+## 检索优化效果（消融实验）
 
-| 指标 | 纯向量检索 | 混合检索（改写+BM25+向量） |
-| --- | --- | --- |
-| Hit Rate | 0.250 | **1.000** |
-| Recall@k | 0.250 | **1.000** |
-| MRR | 0.083 | **0.875** |
+评测集共 **38 条**（BERT 20 条 + Transformer 18 条），每条主题含中英两问，按类型分为概念 / 参数 / 表格 / 架构，`top_k=4`。四档检索配置逐级叠加，量化每个组件的增量：
 
-修复了两个已知问题：
+| 配置 | 说明 |
+| --- | --- |
+| 纯向量 | `embedding-3` 向量检索（Phase 1 基线） |
+| +BM25 | 词面 + 向量 RRF 融合（无改写） |
+| +跨语言改写 | 中文问题先译成英文检索词，再做 BM25 + 向量混合 |
+| +LLM 精排 | 召回后由 `glm-4-flash` 对候选逐条打分重排 |
 
-1. **中英跨语言语义鸿沟**：中文「实验数据集是什么」原相似度仅 0.35 检索失败，改写为英文检索词后正常命中数据集章节。
-2. **检索答偏**：中文「核心贡献」原误命中作者分工/模型参数，混合检索后命中 Introduction 技术贡献列表。
+**data/bert.pdf（20 条）**
+
+| 指标 | 纯向量 | +BM25 | +跨语言改写 | +LLM 精排 |
+| --- | --- | --- | --- | --- |
+| Hit Rate | 0.800 | 0.700 | 0.850 | **0.900** |
+| Recall@k | 0.750 | 0.700 | 0.850 | **0.900** |
+| MRR | 0.629 | 0.579 | 0.642 | **0.825** |
+
+**data/paper.pdf（Transformer，18 条）**
+
+| 指标 | 纯向量 | +BM25 | +跨语言改写 | +LLM 精排 |
+| --- | --- | --- | --- | --- |
+| Hit Rate | 0.889 | 0.944 | **1.000** | 0.944 |
+| Recall@k | 0.861 | 0.889 | **0.944** | 0.944 |
+| MRR | 0.713 | 0.704 | 0.782 | **0.815** |
+
+结论：
+
+1. **跨语言改写是关键增量**：`embedding-3` 中英向量距离大，中文问题不改写就检索不到英文正文；改写后 BERT 的 Hit@4 从 0.80 提到 0.85+。
+2. **BM25 离不开改写**：中文原文做英文词面匹配无效，甚至稀释向量结果（BERT 上 +BM25 反而降到 0.70）。生产路径因此是「改写 + BM25 + 向量」，而非单独加 BM25。
+3. **LLM 精排提升排序质量**：让命中片段更靠前，MRR 在 BERT（0.642→0.825）、Transformer（0.782→0.815）上都有明显提升。
+
+默认检索路径为「跨语言改写 + BM25 + 向量」（agent 的 `search_text` 所用）；LLM 精排作为可选升级，在消融里切换 `use_rerank=True` 即可开启。
