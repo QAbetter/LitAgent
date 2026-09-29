@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NewLitAgent 文献研读</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+:root { --bg:#f6f7f9; --card:#fff; --border:#e5e7eb; --text:#1f2937; --muted:#6b7280; --accent:#2563eb; }
+* { box-sizing: border-box; }
+body { margin:0; font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); }
+header { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:14px 20px; background:var(--card); border-bottom:1px solid var(--border); position:sticky; top:0; flex-wrap:wrap; }
+header h1 { margin:0; font-size:18px; }
+header .sub { color:var(--muted); font-size:13px; }
+.toolbar { display:flex; gap:8px; align-items:center; }
+button { cursor:pointer; border:1px solid var(--border); background:var(--card); padding:8px 14px; border-radius:8px; font-size:14px; }
+button#send { background:var(--accent); color:#fff; border:none; }
+button:disabled { opacity:.5; cursor:not-allowed; }
+select { padding:8px 10px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:var(--card); max-width:220px; }
+main { max-width:860px; margin:0 auto; padding:20px 20px 160px; }
+.msg { margin-bottom:18px; }
+.msg .role { font-size:12px; color:var(--muted); margin-bottom:4px; }
+.msg.user { text-align:right; }
+.msg.user .bubble { background:var(--accent); color:#fff; padding:10px 14px; border-radius:10px; display:inline-block; max-width:85%; text-align:left; }
+.msg.assistant .bubble { background:var(--card); border:1px solid var(--border); padding:14px 16px; border-radius:10px; }
+.msg.assistant .bubble img { max-width:100%; border:1px solid var(--border); border-radius:8px; margin:8px 0; cursor:pointer; display:block; }
+.msg.assistant .bubble table { border-collapse:collapse; margin:8px 0; }
+.msg.assistant .bubble th, .msg.assistant .bubble td { border:1px solid var(--border); padding:6px 10px; font-size:13px; }
+.tools { margin-top:10px; display:flex; flex-wrap:wrap; gap:6px; }
+.tool { font-size:12px; color:var(--muted); background:#eef2ff; padding:3px 8px; border-radius:6px; }
+footer { position:fixed; bottom:0; left:0; right:0; background:var(--card); border-top:1px solid var(--border); padding:12px 20px; display:flex; gap:10px; align-items:flex-end; }
+footer textarea { flex:1; resize:none; height:52px; padding:12px; border:1px solid var(--border); border-radius:8px; font-size:14px; font-family:inherit; }
+#loading { text-align:center; color:var(--muted); padding:10px; font-size:14px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>NewLitAgent 文献研读</h1>
+    <div class="sub">多模态 Agent · 图文检索 + 溯源</div>
+  </div>
+  <div class="toolbar">
+    <select id="paperSelect" title="选择论文"></select>
+    <button id="uploadBtn">上传论文</button>
+    <button id="reset">新话题</button>
+  </div>
+  <input type="file" id="fileInput" accept=".pdf,application/pdf" hidden>
+</header>
+<main id="chat"></main>
+<footer>
+  <textarea id="input" placeholder="向当前论文提问，例如：这篇论文主要贡献是什么"></textarea>
+  <button id="send">发送</button>
+</footer>
+
+<script>
+const chat = document.getElementById('chat');
+const input = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+const resetBtn = document.getElementById('reset');
+const paperSelect = document.getElementById('paperSelect');
+const uploadBtn = document.getElementById('uploadBtn');
+const fileInput = document.getElementById('fileInput');
+
+let currentPaper = null;
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function renderMarkdown(text) {
+  const fn = window.marked && (window.marked.parse || window.marked);
+  return fn ? fn(text) : esc(text).replace(/\n/g, '<br>');
+}
+
+function updateSub() {
+  const sub = document.querySelector('header .sub');
+  sub.textContent = currentPaper ? ('当前论文：' + currentPaper) : '多模态 Agent · 图文检索 + 溯源';
+}
+
+async function loadPapers(selectId) {
+  const resp = await fetch('/api/papers');
+  const data = await resp.json();
+  paperSelect.innerHTML = '';
+  data.papers.forEach(p => {
+    const o = document.createElement('option');
+    o.value = p.id;
+    o.textContent = p.name;
+    paperSelect.appendChild(o);
+  });
+  if (selectId && data.papers.some(p => p.id === selectId)) {
+    paperSelect.value = selectId;
+  }
+  currentPaper = paperSelect.value || null;
+  updateSub();
+}
+
+function addMessage(role, content) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.innerHTML = '<div class="role">' + (role === 'user' ? '你' : '助手') + '</div><div class="bubble"></div>';
+  const bubble = div.querySelector('.bubble');
+  if (typeof content === 'string') {
+    bubble.innerHTML = role === 'user' ? esc(content) : renderMarkdown(content);
+  }
+  chat.appendChild(div);
+  chat.scrollTop = chat.scrollHeight;
+  return div;
+}
+
+function addAssistant(data) {
+  const div = addMessage('assistant', data.answer || '（无回答）');
+  const bubble = div.querySelector('.bubble');
+  if (data.images && data.images.length) {
+    data.images.forEach(u => {
+      const a = document.createElement('a');
+      a.href = u; a.target = '_blank';
+      a.innerHTML = '<img src="' + esc(u) + '" loading="lazy" alt="研究图片">';
+      bubble.appendChild(a);
+    });
+  }
+  if (data.tools && data.tools.length) {
+    const box = document.createElement('div');
+    box.className = 'tools';
+    data.tools.forEach(t => {
+      const s = document.createElement('span');
+      s.className = 'tool';
+      s.textContent = '工具 ' + t.name + '(' + JSON.stringify(t.arguments) + ')';
+      box.appendChild(s);
+    });
+    bubble.appendChild(box);
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function showLoading(on) {
+  let el = document.getElementById('loading');
+  if (on) {
+    if (!el) { el = document.createElement('div'); el.id = 'loading'; el.textContent = 'Agent 思考中…'; chat.appendChild(el); }
+  } else if (el) {
+    el.remove();
+  }
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function send() {
+  const q = input.value.trim();
+  if (!q) return;
+  if (!currentPaper) { addMessage('assistant', '请先上传或选择一篇论文。'); return; }
+  addMessage('user', q);
+  input.value = '';
+  sendBtn.disabled = true;
+  showLoading(true);
+  try {
+    const resp = await fetch('/api/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paper_id: currentPaper, question: q }),
+    });
+    const data = await resp.json();
+    showLoading(false);
+    addAssistant(data);
+  } catch (e) {
+    showLoading(false);
+    addMessage('assistant', '请求失败：' + e.message);
+  } finally {
+    sendBtn.disabled = false;
+    input.focus();
+  }
+}
+
+async function reset() {
+  if (!currentPaper) return;
+  await fetch('/api/reset', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paper_id: currentPaper }),
+  });
+  chat.innerHTML = '';
+}
+
+sendBtn.addEventListener('click', send);
+input.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+resetBtn.addEventListener('click', reset);
+
+uploadBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async () => {
+  const f = fileInput.files[0];
+  if (!f) return;
+  const fd = new FormData();
+  fd.append('file', f);
+  uploadBtn.disabled = true;
+  try {
+    const resp = await fetch('/api/upload', { method: 'POST', body: fd });
+    const data = await resp.json();
+    if (resp.ok) {
+      await loadPapers(data.id);
+      chat.innerHTML = '';
+      addMessage('assistant', '已上传并载入论文 **' + data.name + '**，现在可以提问了。');
+    } else {
+      addMessage('assistant', '上传失败：' + (data.detail || '未知错误'));
+    }
+  } catch (e) {
+    addMessage('assistant', '上传失败：' + e.message);
+  } finally {
+    uploadBtn.disabled = false;
+    fileInput.value = '';
+  }
+});
+
+// 切换论文时清空当前对话展示（各论文的上下文在服务端独立保留）
+paperSelect.addEventListener('change', () => {
+  currentPaper = paperSelect.value;
+  updateSub();
+  chat.innerHTML = '';
+});
+
+loadPapers();
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "litagent"
+version = "0.1.0"
+description = "多模态文献研读 Agent（面向 AI 求职的作品集项目）"
+requires-python = ">=3.10"
+dependencies = [
+    "openai>=1.40.0",
+    "pydantic-settings>=2.0.0",
+    "pymupdf>=1.24.0",
+    "chromadb>=0.5.0",
+    "langchain-text-splitters>=0.3.0",
+]
+
+[tool.setuptools]
+packages = [
+    "config",
+    "litagent",
+    "litagent.ingest",
+    "litagent.rag",
+    "litagent.agent",
+    "litagent.eval",
+    "litagent.ui",
+]

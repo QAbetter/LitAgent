@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 环境变量与密钥
+.env
+
+# 数据与生成物（论文 PDF、测试图片、向量索引、图/表抽取缓存均为本地生成，不提交）
+data/*.pdf
+data/*.jpg
+data/*.png
+data/indexes/
+data/figures/
+data/tables/
+
+# 临时/日志
+*.log
