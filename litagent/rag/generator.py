@@ -1,13 +1,7 @@
 """Phase 1：生成器（把检索到的上下文喂给文本模型，生成带溯源的答案）。"""
 
-from openai import OpenAI
-
 from config.settings import settings
-
-
-def _client() -> OpenAI:
-    """创建智谱 OpenAI 兼容客户端。"""
-    return OpenAI(api_key=settings.zhipu_api_key, base_url=settings.zhipu_base_url)
+from litagent.llm import get_client
 
 
 def _build_prompt(question: str, results: list[dict]) -> str:
@@ -24,7 +18,7 @@ def _build_prompt(question: str, results: list[dict]) -> str:
 def generate(question: str, results: list[dict]) -> str:
     """根据检索到的上下文生成最终答案。"""
     prompt = _build_prompt(question, results)
-    resp = _client().chat.completions.create(
+    resp = get_client().chat.completions.create(
         model=settings.text_model,
         messages=[{"role": "user", "content": prompt}],
     )

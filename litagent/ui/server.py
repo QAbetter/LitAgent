@@ -73,7 +73,7 @@ def list_papers() -> dict:
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)) -> dict:
+async def upload(file: UploadFile = File(...)) -> dict:  # noqa: B008  # FastAPI 依赖注入惯用法
     """接收上传的 PDF，保存到 data/ 后返回新论文 id。"""
     raw = file.filename or "paper.pdf"
     if not raw.lower().endswith(".pdf"):

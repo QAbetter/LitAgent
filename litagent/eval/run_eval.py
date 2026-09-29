@@ -8,13 +8,17 @@
 
 评测集按 PDF 文件名（stem）自动匹配，解决「换论文却仍用 BERT 评测集」的张冠李戴问题。
 
+离线模式（--offline）：加载 golden 快照的确定性桩，跑与在线完全相同的检索
+代码路径，不联网、不烧钱、结果确定。适合 CI 与可复现演示。
+先联网录制一次：python -m litagent.eval.golden --record data/bert.pdf
+
 用法：
-    python -m litagent.eval.run_eval [pdf路径] [top_k]
+    python -m litagent.eval.run_eval [pdf路径] [top_k] [--offline]
 
 示例：
     python -m litagent.eval.run_eval                        # 默认 data/bert.pdf, top_k=4
     python -m litagent.eval.run_eval data/paper.pdf         # 评测 Transformer 论文
-    python -m litagent.eval.run_eval data/bert.pdf 4
+    python -m litagent.eval.run_eval data/bert.pdf 4 --offline
 """
 
 import sys
@@ -62,24 +66,58 @@ def _fmt_pages(pages: list[int], gt: frozenset[int], k: int) -> str:
     return ",".join(shown)
 
 
+def _parse_args(argv: list[str]) -> tuple[str, int, bool]:
+    """解析 (pdf, top_k, offline) 三参数，兼容旧调用与 --offline 位置无关。"""
+    pdf_path = "data/bert.pdf"
+    top_k = 4
+    offline = "--offline" in argv
+    pos = [a for a in argv if not a.startswith("--")]
+    if pos:
+        pdf_path = pos[0]
+    if len(pos) > 1:
+        top_k = int(pos[1])
+    return pdf_path, top_k, offline
+
+
+def _make_retriever(store: VectorStore, cfg: dict, hooks: tuple | None) -> HybridRetriever:
+    """构造检索器：离线模式注入 golden 桩，在线模式用默认真实实现。"""
+    if hooks is not None:
+        embed_fn, rewrite_fn, rerank_fn = hooks
+        return HybridRetriever(
+            store, **cfg, embed_fn=embed_fn, rewrite_fn=rewrite_fn, rerank_fn=rerank_fn
+        )
+    return HybridRetriever(store, **cfg)
+
+
 def main() -> None:
-    pdf_path = sys.argv[1] if len(sys.argv) > 1 else "data/bert.pdf"
-    top_k = int(sys.argv[2]) if len(sys.argv) > 2 else 4
+    pdf_path, top_k, offline = _parse_args(sys.argv[1:])
 
     stem = Path(pdf_path).stem
     queries = queries_for(stem)  # 按论文名自动匹配，张冠李戴会在此抛 KeyError
     store = _load_store(pdf_path)
 
+    hooks = None
+    if offline:
+        from litagent.eval.golden import load, playback, snapshot_path
+
+        snap_path = snapshot_path(stem)
+        if not snap_path.exists():
+            print(f"缺少 golden 快照: {snap_path}；请先运行: "
+                  f"python -m litagent.eval.golden --record {pdf_path}")
+            sys.exit(1)
+        hooks = playback(load(snap_path))
+        print(f"离线回放模式（golden 确定性桩）：{snap_path}")
+
     print(f"评测对象: {pdf_path}   评测集 {len(queries)} 条（中英对照）  top_k={top_k}")
     cats = {}
     for q in queries:
         cats[q.category] = cats.get(q.category, 0) + 1
-    print(f"类型分布: " + "  ".join(f"{c}×{n}" for c, n in sorted(cats.items())))
+    print("类型分布: " + "  ".join(f"{c}×{n}" for c, n in sorted(cats.items())))
 
     # 每个配置跑一遍全部样本，记录每条的指标与命中页
     results: list[tuple[str, list[dict], list[list[int]]]] = []
     for label, cfg in CONFIGS:
-        retriever = HybridRetriever(store, **cfg)
+        retriever = _make_retriever(store, cfg, hooks)
         rows, page_lists = [], []
         for q in queries:
             pages = _pages(retriever.search(q.question, top_k=top_k))

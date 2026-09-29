@@ -5,16 +5,9 @@
 
 import base64
 from pathlib import Path
-from typing import Optional
-
-from openai import OpenAI
 
 from config.settings import settings
-
-
-def _client() -> OpenAI:
-    """创建智谱 OpenAI 兼容客户端。"""
-    return OpenAI(api_key=settings.zhipu_api_key, base_url=settings.zhipu_base_url)
+from litagent.llm import get_client
 
 
 def _to_image_url(ref: str) -> str:
@@ -29,7 +22,7 @@ def _to_image_url(ref: str) -> str:
     return f"data:image/{ext};base64,{b64}"
 
 
-def answer_image(image: str, question: str, model: Optional[str] = None) -> str:
+def answer_image(image: str, question: str, model: str | None = None) -> str:
     """对单张图片进行描述 / 问答。
 
     Args:
@@ -38,7 +31,7 @@ def answer_image(image: str, question: str, model: Optional[str] = None) -> str:
         model: 可选，覆盖配置里的视觉模型。
     """
     image_url = _to_image_url(image)
-    resp = _client().chat.completions.create(
+    resp = get_client().chat.completions.create(
         model=model or settings.vision_model,
         messages=[
             {

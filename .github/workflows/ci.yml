@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 安装依赖
+        run: |
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      - name: ruff 静态检查
+        run: ruff check litagent tests config
+
+      # 离线单元/集成测试（不联网、确定性）：metrics/chunking/向量库/混合检索/golden回收/Agent循环
+      - name: pytest（离线确定性）
+        run: pytest -q
+
+      # 编译检查：确保所有模块可导入、无缺参（不依赖 data/ 目录）
+      - name: import 冒烟
+        run: python -c "import litagent.agent, litagent.eval.run_eval, litagent.eval.golden, litagent.rag.hybrid, litagent.vision"

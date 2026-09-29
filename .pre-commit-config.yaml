@@ -1,0 +1,17 @@
+# pre-commit 钩子：提交前自动跑 ruff 检查 + 全量离线测试
+# 安装：pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.3
+    hooks:
+      - id: ruff
+        args: [check, litagent, tests, config]
+
+  - repo: local
+    hooks:
+      - id: pytest-offline
+        name: pytest (离线确定性)
+        entry: python -m pytest
+        language: system
+        pass_filenames: false
+        always_run: true

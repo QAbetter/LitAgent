@@ -49,7 +49,7 @@ class VectorStore:
         dists = res["distances"][0]
 
         results: list[dict] = []
-        for doc, meta, dist in zip(docs, metas, dists):
+        for doc, meta, dist in zip(docs, metas, dists, strict=False):
             # 余弦距离 → 余弦相似度
             results.append(
                 {
@@ -79,7 +79,7 @@ class VectorStore:
                 "page_no": m["page_no"],
                 "chunk_index": m["chunk_index"],
             }
-            for i, d, m in zip(ids, res["documents"], res["metadatas"])
+            for i, d, m in zip(ids, res["documents"], res["metadatas"], strict=False)
         ]
 
     def count(self) -> int:

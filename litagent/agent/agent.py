@@ -10,11 +10,9 @@ Agent 拿到用户问题后不预设流程，而是让语言模型自主决定�
 
 import json
 
-from openai import OpenAI
-
 from config.settings import settings
 from litagent.agent.tools import TOOLS, ToolBox
-
+from litagent.llm import get_client
 
 SYSTEM_PROMPT = (
     "你是专业的学术论文研读助手，正在研读一篇已加载到本地的论文 PDF。"
@@ -45,8 +43,9 @@ class PaperAgent:
         """清空对话历史，开始一个新话题。"""
         self.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    def _client(self) -> OpenAI:
-        return OpenAI(api_key=settings.zhipu_api_key, base_url=settings.zhipu_base_url)
+    def _client(self):
+        """底层 LLM 客户端。单独抽出便于测试注入 fake。"""
+        return get_client()
 
     def ask(self, question: str, verbose: bool = True) -> str:
         """回答用户问题，返回带溯源的最终答案（纯文本，向后兼容 CLI）。"""

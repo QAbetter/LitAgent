@@ -19,5 +19,9 @@ class Settings(BaseSettings):
     # 向量化（Embedding）模型
     embedding_model: str = "embedding-3"
 
+    # 请求超时（秒）与失败重试次数：统一到 litagent/llm.py 的客户端
+    request_timeout: float = 30.0
+    max_retries: int = 2
+
 
 settings = Settings()

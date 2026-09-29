@@ -12,6 +12,8 @@
 - **跨语言查询改写**：中文问题先改写为英文检索词，跨越中英 embedding 语义鸿沟。
 - **Agent 编排**：`glm-4-flash` function calling 多轮循环，自主选择 5 个工具并溯源。
 - **评测闭环**：38 条评测集（2 篇论文 × 中英对照 × 类型分层）+ 检索指标（Hit Rate / Recall@k / MRR）+ 4 档消融实验。
+- **离线可复现评测**：golden 快照把 embedding / LLM 改写 / 精排「录制 → 回放」，评测不联网、不烧钱、确定性。
+- **可测试、可 CI**：`pytest` 离线单元+集成测试（注入确定性桩）+ GitHub Actions + ruff 静态检查。
 
 ## 技术栈
 
@@ -55,8 +57,12 @@ litagent/
   eval/
     dataset.py           # 检索评测集（38 条，2 论文，中英对照 + 类型分层）
     metrics.py           # Hit Rate / Recall@k / MRR
-    run_eval.py          # 4 档消融对比入口
+    run_eval.py          # 4 档消融对比入口（支持 --offline 离线回放）
+    golden.py            # golden 快照：录制/回放，让评测离线、确定性可复现
+  llm.py                 # 统一 LLM 客户端（复用连接 + 超时/重试）
 config/settings.py       # 配置（读取 .env）
+tests/                   # pytest：metrics / chunking / 向量库 / 混合检索 / golden / agent 循环
+.github/workflows/ci.yml # GitHub Actions：ruff + pytest + import 冒烟
 ```
 
 ## 快速开始
@@ -98,7 +104,32 @@ python -m litagent.eval.run_eval data/bert.pdf     # BERT 论文（20 条）
 python -m litagent.eval.run_eval data/paper.pdf    # Transformer 论文（18 条）
 # 每个命令跑 4 档检索配置：纯向量 → +BM25 → +跨语言改写 → +LLM 精排，
 # 输出逐条明细 + 汇总指标（Hit Rate / Recall@k / MRR）+ 分类型分层
+
+# 离线、确定性回放（不联网、不烧钱，适合 CI/演示）：
+python -m litagent.eval.golden --record data/bert.pdf   # 先联网录制一次快照
+python -m litagent.eval.run_eval data/bert.pdf --offline # 之后可完全离线复现
 ```
+
+## 测试与 CI
+
+```bash
+pip install -r requirements-dev.txt   # 额外安装 pytest / ruff
+pytest -q                             # 全部离线、注入确定性桩，不联网
+ruff check litagent tests config      # 静态检查
+```
+
+- **离线确定性**：测试与评测均不调用真实 API——向量、LLM 改写/精排用注入的确定性桩
+  或 golden 快照回放替代，CI 上可复现。
+- **CI**：`.github/workflows/ci.yml` 在 Ubuntu 多 Python 版本下跑 `ruff + pytest + import 冒烟`。
+- **pre-commit**：`.pre-commit-config.yaml` 在提交前自动跑 ruff 与离线测试。
+
+## 简历要点（工程化增量）
+
+1. **统一 LLM 客户端**（`litagent/llm.py`）：复用连接 + 超时/重试，消除各处重复 `_client()`。
+2. **检索器依赖注入**：`HybridRetriever` 的 embed / 改写 / 精排三个外部调用点可替换，
+   是实现「离线复现评测」与单元测试的基础。
+3. **golden 快照回归**：把外部调用「录制 → 回放」，评测从「每次联网烧钱」变成「离线确定性」，
+   支持 CI 里做检索回归。
 
 ## 各阶段
 

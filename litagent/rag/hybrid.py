@@ -7,15 +7,19 @@
 
 默认配置（use_rewrite=True, use_bm25=True, use_rerank=False）即生产检索路径，
 也是 agent.tools 中 search_text 所用。
+
+依赖注入：`embed_fn / rewrite_fn / rerank_fn` 三个函数可替换，默认真实实现。
+评测（golden 回放）与单元测试注入确定性桩，让整条检索管线离线、可复现。
 """
 
 import json
 import re
+from collections.abc import Callable
 
-from openai import OpenAI
 from rank_bm25 import BM25Okapi
 
 from config.settings import settings
+from litagent.llm import get_client
 from litagent.rag.embedding import embed_query
 from litagent.rag.vector_store import VectorStore
 
@@ -28,15 +32,15 @@ _CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
 # RRF 融合常数，越大越偏向「排名靠前」的记录
 RRF_K = 60
 
+# 可注入的函数签名
+EmbedFn = Callable[[str], list[float]]
+RewriteFn = Callable[[str], tuple[str, str]]
+RerankFn = Callable[[str, list[dict]], list[float] | None]
+
 
 def _tokenize(text: str) -> list[str]:
     """把整段英文文本切成词面 token（BM25 用）。"""
     return _TOKEN_RE.findall(text.lower())
-
-
-def _client() -> OpenAI:
-    """创建智谱 OpenAI 兼容客户端。"""
-    return OpenAI(api_key=settings.zhipu_api_key, base_url=settings.zhipu_base_url)
 
 
 def rewrite_query(question: str) -> tuple[str, str]:
@@ -47,7 +51,7 @@ def rewrite_query(question: str) -> tuple[str, str]:
     """
     if not _CJK_RE.search(question):
         return question, "无需改写"
-    resp = _client().chat.completions.create(
+    resp = get_client().chat.completions.create(
         model=settings.text_model,
         messages=[
             {
@@ -74,7 +78,7 @@ def rerank(query: str, candidates: list[dict]) -> list[float] | None:
         return []
     # 候选片段本身较短（≤ chunk_size），喂完整文本，避免截断丢掉关键句
     numbered = "\n".join(f"[{i}] {c['text']}" for i, c in enumerate(candidates))
-    resp = _client().chat.completions.create(
+    resp = get_client().chat.completions.create(
         model=settings.text_model,
         messages=[
             {
@@ -114,7 +118,11 @@ def rerank(query: str, candidates: list[dict]) -> list[float] | None:
 
 
 class HybridRetriever:
-    """可配置检索器：改写 → 召回（向量 / 向量+BM25）→ 精排（可选 LLM rerank）。"""
+    """可配置检索器：改写 → 召回（向量 / 向量+BM25）→ 精排（可选 LLM rerank）。
+
+    三个外部调用点（向量化 / 改写 / 精排）默认使用真实实现，可通过构造参数
+    注入确定性桩，从而在无需联网的情况下复现同一检索路径。
+    """
 
     def __init__(
         self,
@@ -123,12 +131,18 @@ class HybridRetriever:
         use_rewrite: bool = True,
         use_bm25: bool = True,
         use_rerank: bool = False,
+        embed_fn: EmbedFn = embed_query,
+        rewrite_fn: RewriteFn = rewrite_query,
+        rerank_fn: RerankFn = rerank,
     ):
         self.store = store
         self.candidate_k = candidate_k
         self.use_rewrite = use_rewrite
         self.use_bm25 = use_bm25
         self.use_rerank = use_rerank
+        self.embed_fn = embed_fn
+        self.rewrite_fn = rewrite_fn
+        self.rerank_fn = rerank_fn
         self._bm25: BM25Okapi | None = None
         self._chunks: list[dict] = []
         # 记录最近一次检索的原始问题与改写结果，供评测/调试查看
@@ -145,10 +159,10 @@ class HybridRetriever:
     def _recall(self, query: str, k: int) -> list[dict]:
         """召回阶段：纯向量，或 BM25 + 向量 RRF 融合。"""
         if not self.use_bm25:
-            return self.store.search(embed_query(query), top_k=k)
+            return self.store.search(self.embed_fn(query), top_k=k)
 
         self._ensure_bm25()
-        vec_hits = self.store.search(embed_query(query), top_k=k)
+        vec_hits = self.store.search(self.embed_fn(query), top_k=k)
         bm25_scores = self._bm25.get_scores(_tokenize(query))
 
         rrf: dict[str, dict] = {}
@@ -182,7 +196,7 @@ class HybridRetriever:
 
     def _llm_rerank(self, query: str, candidates: list[dict], top_k: int) -> list[dict]:
         """精排阶段：用 LLM 打分重排，失败则保持原顺序。"""
-        scores = rerank(query, candidates)
+        scores = self.rerank_fn(query, candidates)
         if scores is None:
             return candidates[:top_k]
         order = sorted(range(len(candidates)), key=lambda i: scores[i], reverse=True)
@@ -195,7 +209,7 @@ class HybridRetriever:
 
     def search(self, query: str, top_k: int = 4) -> list[dict]:
         """执行检索管线，返回与 VectorStore.search 相同结构的结果列表。"""
-        q, _ = (rewrite_query(query) if self.use_rewrite else (query, "无需改写"))
+        q, _ = (self.rewrite_fn(query) if self.use_rewrite else (query, "无需改写"))
         self.last_query = query
         self.last_rewritten = q
 

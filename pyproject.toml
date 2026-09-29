@@ -30,3 +30,19 @@ packages = [
     "litagent.eval",
     "litagent.ui",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    "E501",   # 行长限制交给编辑习惯，不强制
+    # 保留对「索引后再判断」等少数合理模式的宽容
+    "B024",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
